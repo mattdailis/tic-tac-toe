@@ -22,7 +22,6 @@ type CanvasContainerState = {
   center: LogicalPoint
   scale: number
   moves: Move[]
-  x_next: boolean
   ws: WebSocket
 }
 
@@ -30,6 +29,7 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
 
   constructor(props : any) {
     super(props);
+    console.log(window.location)
     this.state = {
       n: 5,
       rAF: null,
@@ -43,8 +43,7 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
         y: 0,
         type: "logical"
       }],
-      x_next: false,
-      ws: new WebSocket("ws://localhost:8080")
+      ws: new WebSocket("ws://" + window.location.host + "/ws")
     };
   }
 
@@ -66,7 +65,7 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
       console.log('disconnected')
       // automatically try to reconnect on connection loss
       this.setState({
-        ws: new WebSocket("ws://localhost:8080"),
+        ws: new WebSocket("ws://" + window.location.host + "/ws"),
       })
     }
 
@@ -85,15 +84,27 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
   }
 
   click = (pt: LogicalPoint) => {
+    var x_next = true
+    if (this.state.moves.length > 0 && this.state.moves[this.state.moves.length - 1].player == "x") {
+      x_next = false
+    }
     const move : Move = {
-      player: this.state.x_next ? "x" : "o",
+      player: x_next ? "x" : "o",
       x: Math.floor(pt.x + 0.5),
       y: Math.floor(pt.y + 0.5),
       type: "logical"
     }
+
+    // Check if this square is occupied
+    for (let prevMove of this.state.moves) {
+      if (Math.floor(prevMove.x + 0.5) == Math.floor(move.x + 0.5) && 
+          Math.floor(prevMove.y + 0.5) == Math.floor(move.y + 0.5)) {
+            return;
+      }
+    }
+
     this.setState({
-      moves: this.state.moves.concat([move]),
-      x_next: !this.state.x_next
+      moves: this.state.moves.concat([move])
     });
 
     const message = {
@@ -177,13 +188,6 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
 
   handleMouseUp(e : React.MouseEvent<HTMLCanvasElement, MouseEvent>) {
     this.setState({mouseDown: false})
-    // if (!this.state.mouseMoved) {
-    //   this.props.click(this.phys_to_log({
-    //     x: e.clientX,
-    //     y: e.clientY,
-    //     type: "physical"
-    //   }))
-    // }
   }
 
   handleDoubleClick(e : React.MouseEvent<HTMLCanvasElement, MouseEvent>) {
