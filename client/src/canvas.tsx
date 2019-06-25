@@ -12,17 +12,22 @@ type LogicalPoint = {
   type: "logical"
 }
 
+type Move = LogicalPoint & {
+  player: "x" | "o"
+}
+
 type CanvasContainerState = {
   n: number
   rAF: null | number
   center: LogicalPoint
   scale: number
-  Xs: LogicalPoint[]
-  Os: LogicalPoint[]
+  moves: Move[]
   x_next: boolean
+  ws: WebSocket
 }
 
 class CanvasContainer extends React.Component<any, CanvasContainerState> {
+
   constructor(props : any) {
     super(props);
     this.state = {
@@ -32,18 +37,40 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
         x: 0, y: 0, type: "logical"
       },
       scale: 1.0,
-      Xs: [{
+      moves: [{
+        player: "x",
         x: 0,
         y: 0,
         type: "logical"
       }],
-      Os: [],
-      x_next: false
+      x_next: false,
+      ws: new WebSocket("ws://localhost:8080")
     };
   }
 
   componentDidMount() {
-    this.setState({rAF: requestAnimationFrame(this.updateAnimationState)});
+
+    const { ws } = this.state
+
+    ws.onopen = () => {
+      console.log('connected')
+    }
+
+    ws.onmessage = evt => {      
+      const message = JSON.parse(evt.data)
+      const { game_id, moves } = message;
+      this.setState({moves : moves})
+    }
+
+    ws.onclose = () => {
+      console.log('disconnected')
+      // automatically try to reconnect on connection loss
+      this.setState({
+        ws: new WebSocket("ws://localhost:8080"),
+      })
+    }
+
+    // this.setState({rAF: requestAnimationFrame(this.updateAnimationState)});
   }
 
   updateAnimationState = () => {
@@ -58,16 +85,23 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
   }
 
   click = (pt: LogicalPoint) => {
-    const newPt : LogicalPoint = {
+    const move : Move = {
+      player: this.state.x_next ? "x" : "o",
       x: Math.floor(pt.x + 0.5),
       y: Math.floor(pt.y + 0.5),
       type: "logical"
     }
-    if (this.state.x_next) {
-      this.setState({Xs: this.state.Xs.concat([newPt]), x_next: false});
-    } else {
-      this.setState({Os: this.state.Os.concat([newPt]), x_next: true});
+    this.setState({
+      moves: this.state.moves.concat([move]),
+      x_next: !this.state.x_next
+    });
+
+    const message = {
+      player: move.player,
+      x: move.x,
+      y: move.y
     }
+    this.state.ws.send(JSON.stringify(message))
   }
 
   render() {
@@ -75,8 +109,7 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
             scale={this.state.scale}
             center={this.state.center}
             moveCenter={this.moveCenter}
-            xs={this.state.Xs}
-            os={this.state.Os}
+            moves={this.state.moves}
             click={this.click}/>;
   }
 
@@ -88,7 +121,6 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
         type: "logical"
       }
     })
-    console.log(this.state.center)
   }
 }
 
@@ -96,8 +128,7 @@ type CanvasProps = {
   center: LogicalPoint,
   scale: number,
   moveCenter: (displacement: LogicalPoint) => void,
-  xs: LogicalPoint[],
-  os: LogicalPoint[],
+  moves: Move[],
   click: (pt: LogicalPoint) => void
 }
 
@@ -134,7 +165,6 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
   }
 
   handleMouseDown() {
-    // console.log(e.clientX, e.clientY)
     this.setState({mouseDown: true, mouseMoved: false})
   }
 
@@ -233,15 +263,18 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
             />;
   }
 
+  componentDidMount() {
+    this.draw()
+  }
   componentDidUpdate() {
+    this.draw()
+  }
+
+  draw() {
     const canvas = this.state.canvasRef.current;
     if (canvas == null) return;
     canvas.width = window.innerWidth; //document.width is obsolete
     canvas.height = window.innerHeight; //document.height is obsolete
-    this.draw(canvas);
-  }
-
-  draw(canvas : HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (ctx == null) return;
 
@@ -262,25 +295,30 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
       ctx.stroke();
     }
 
-    for (let pt of this.props.xs) {
+    if (this.props.moves.length > 0) {
+      const {x, y} = this.log_to_phys(this.props.moves[this.props.moves.length - 1])
+      ctx.fillStyle = "#00FFFF";
+      ctx.fillRect(1 + x - delta / 2, 1 + y - delta / 2, delta - 2, delta - 2);
+    }
+
+    for (let pt of this.props.moves) {
       if (!this.nearScreen(pt)) continue;
       const {x, y} = this.log_to_phys(pt);
       const k = 20 * delta/75
-      ctx.beginPath();
-      ctx.moveTo(x - k, y - k);
-      ctx.lineTo(x + k, y + k);
 
-      ctx.moveTo(x + k, y - k);
-      ctx.lineTo(x - k, y + k);
-      ctx.stroke();
-    }
+      if (pt.player == "x") {
+        ctx.beginPath();
+        ctx.moveTo(x - k, y - k);
+        ctx.lineTo(x + k, y + k);
 
-    for (let pt of this.props.os) {
-      if (!this.nearScreen(pt)) continue;
-      const {x, y} = this.log_to_phys(pt);
-      ctx.beginPath();
-      ctx.arc(x, y, 0.3 * delta, 0, 2 * Math.PI);
-      ctx.stroke();
+        ctx.moveTo(x + k, y - k);
+        ctx.lineTo(x - k, y + k);
+        ctx.stroke();
+      } else if (pt.player == "o") {
+        ctx.beginPath();
+        ctx.arc(x, y, 0.3 * delta, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
     }
   }
 
