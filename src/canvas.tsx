@@ -19,6 +19,7 @@ type CanvasContainerState = {
   scale: number
   Xs: LogicalPoint[]
   Os: LogicalPoint[]
+  x_next: boolean
 }
 
 class CanvasContainer extends React.Component<any, CanvasContainerState> {
@@ -36,7 +37,8 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
         y: 0,
         type: "logical"
       }],
-      Os: []
+      Os: [],
+      x_next: false
     };
   }
 
@@ -55,13 +57,27 @@ class CanvasContainer extends React.Component<any, CanvasContainerState> {
     }
   }
 
+  click = (pt: LogicalPoint) => {
+    const newPt : LogicalPoint = {
+      x: Math.floor(pt.x + 0.5),
+      y: Math.floor(pt.y + 0.5),
+      type: "logical"
+    }
+    if (this.state.x_next) {
+      this.setState({Xs: this.state.Xs.concat([newPt]), x_next: false});
+    } else {
+      this.setState({Os: this.state.Os.concat([newPt]), x_next: true});
+    }
+  }
+
   render() {
     return <Canvas
             scale={this.state.scale}
             center={this.state.center}
             moveCenter={this.moveCenter}
             xs={this.state.Xs}
-            os={this.state.Os}/>;
+            os={this.state.Os}
+            click={this.click}/>;
   }
 
   moveCenter = (displacement: LogicalPoint) => {
@@ -81,11 +97,13 @@ type CanvasProps = {
   scale: number,
   moveCenter: (displacement: LogicalPoint) => void,
   xs: LogicalPoint[],
-  os: LogicalPoint[]
+  os: LogicalPoint[],
+  click: (pt: LogicalPoint) => void
 }
 
 type CanvasState = {
   mouseDown : boolean;
+  mouseMoved: boolean;
   canvasRef : React.RefObject<HTMLCanvasElement>;
   delta : number;
   initialOffset : PhysicalPoint;
@@ -104,7 +122,8 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
     this.state = {
       canvasRef: React.createRef(),
       mouseDown: false,
-      delta: 75,
+      mouseMoved: false,
+      delta: 50,
       previousTouch: null,
       initialOffset: {
         x: window.innerWidth / 2,
@@ -116,20 +135,39 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
 
   handleMouseDown() {
     // console.log(e.clientX, e.clientY)
-    this.setState({mouseDown: true})
+    this.setState({mouseDown: true, mouseMoved: false})
   }
 
   handleMouseMove(e : React.MouseEvent<HTMLCanvasElement, MouseEvent>) {
+    this.setState({mouseMoved: true})
     if (this.state.mouseDown) {
       this.props.moveCenter({x: e.movementX / this.state.delta, y: e.movementY / this.state.delta, type: "logical"})
     }
   }
 
-  handleMouseUp() {
+  handleMouseUp(e : React.MouseEvent<HTMLCanvasElement, MouseEvent>) {
     this.setState({mouseDown: false})
+    // if (!this.state.mouseMoved) {
+    //   this.props.click(this.phys_to_log({
+    //     x: e.clientX,
+    //     y: e.clientY,
+    //     type: "physical"
+    //   }))
+    // }
+  }
+
+  handleDoubleClick(e : React.MouseEvent<HTMLCanvasElement, MouseEvent>) {
+    // if (!this.state.mouseMoved) {
+    this.props.click(this.phys_to_log({
+      x: e.clientX,
+      y: e.clientY,
+      type: "physical"
+    }))
+    // }
   }
 
   handleTouchMove(e: React.TouchEvent) {
+    this.setState({mouseMoved: true})
     e.preventDefault();
     if (this.state.previousTouch != null) {
       const dx = e.touches[0].clientX - this.state.previousTouch.x;
@@ -164,6 +202,21 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
 
   handleTouchEnd(e: React.TouchEvent) {
     this.setState({previousTouch : null})
+    if (!this.state.mouseMoved && this.state.previousTouch != null) {
+      this.props.click(this.phys_to_log({
+        x: this.state.previousTouch.x,
+        y: this.state.previousTouch.y,
+        type: "physical"
+      }))
+    }
+  }
+
+  handleWheel(e : React.WheelEvent<HTMLCanvasElement>){
+    if (e.deltaY > 0) {
+      this.setState({delta: this.state.delta + 1})
+    } else if (e.deltaY < 0 && this.state.delta > 20) {
+      this.setState({delta: this.state.delta - 1})
+    }
   }
 
   render() {
@@ -175,6 +228,8 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
             onTouchStart={this.handleTouchStart.bind(this)}
             onTouchMove={this.handleTouchMove.bind(this)}
             onTouchEnd={this.handleTouchEnd.bind(this)}
+            onDoubleClick={this.handleDoubleClick.bind(this)}
+            onWheel={this.handleWheel.bind(this)}
             />;
   }
 
@@ -194,13 +249,13 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
 
     const delta = this.state.delta / this.props.scale;
 
-    for (var x = (center.x % 1) * delta; x < canvas.width; x += delta) {
+    for (var x = (center.x % 1 - 0.5) * delta + this.state.initialOffset.x % delta; x < canvas.width; x += delta) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, canvas.height);
       ctx.stroke();
     }
-    for (var y = (center.y % 1) * delta; y < canvas.height; y += delta) {
+    for (var y = (center.y % 1 - 0.5) * delta + this.state.initialOffset.y % delta;  y < canvas.height; y += delta) {
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(canvas.width, y);
@@ -208,14 +263,23 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
     }
 
     for (let pt of this.props.xs) {
-      if (!this.onScreen(pt)) return;
+      if (!this.nearScreen(pt)) continue;
+      const {x, y} = this.log_to_phys(pt);
+      const k = 20 * delta/75
+      ctx.beginPath();
+      ctx.moveTo(x - k, y - k);
+      ctx.lineTo(x + k, y + k);
+
+      ctx.moveTo(x + k, y - k);
+      ctx.lineTo(x - k, y + k);
+      ctx.stroke();
+    }
+
+    for (let pt of this.props.os) {
+      if (!this.nearScreen(pt)) continue;
       const {x, y} = this.log_to_phys(pt);
       ctx.beginPath();
-      ctx.moveTo(x - 20, y - 20);
-      ctx.lineTo(x + 20, y + 20);
-
-      ctx.moveTo(x + 20, y - 20);
-      ctx.lineTo(x - 20, y + 20);
+      ctx.arc(x, y, 0.3 * delta, 0, 2 * Math.PI);
       ctx.stroke();
     }
   }
@@ -231,6 +295,46 @@ class Canvas extends React.Component<CanvasProps, CanvasState> {
       y: (center.y + pt.y) * delta + initialOffset.y,
       type: "physical"
     }
+  }
+
+  phys_to_log(pt: PhysicalPoint): LogicalPoint {
+    const {center} = this.props;
+    const {delta, initialOffset} = this.state;
+    const canvas = this.state.canvasRef.current;
+    if (canvas == null) return {x: 0, y: 0, type: "logical"};
+
+    return {
+      x: ((pt.x - initialOffset.x) / delta) - center.x,
+      y: ((pt.y - initialOffset.y) / delta) - center.y,
+      type: "logical"
+    }
+  }
+
+  nearScreen(pt: LogicalPoint) {
+    const topLeft: LogicalPoint = {
+      x: pt.x - 0.5,
+      y: pt.y - 0.5,
+      type: "logical"
+    }
+    const topRight: LogicalPoint = {
+      x: pt.x + 0.5,
+      y: pt.y - 0.5,
+      type: "logical"
+    }
+    const bottomLeft: LogicalPoint = {
+      x: pt.x - 0.5,
+      y: pt.y + 0.5,
+      type: "logical"
+    }
+    const bottomRight: LogicalPoint = {
+      x: pt.x + 0.5,
+      y: pt.y + 0.5,
+      type: "logical"
+    }
+    return this.onScreen(topLeft) ||
+      this.onScreen(topRight) ||
+      this.onScreen(bottomLeft) ||
+      this.onScreen(bottomRight)
   }
 
   onScreen(pt: LogicalPoint): boolean {
